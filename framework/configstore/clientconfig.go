@@ -2435,6 +2435,120 @@ func GenerateAgentRegistrationHash(r *schemas.AgentRegistration) (string, error)
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// GenerateRelayHash generates a SHA256 hash of a relay as config.json declares it, the way
+// ProviderConfig.GenerateConfigHash hashes a provider: each field is written on its own and each
+// optional block only when set, so a field added to RelayConfig does not move the hash of every
+// stored relay on upgrade. This is used to detect changes between config.json and the stored row.
+func GenerateRelayHash(cfg *schemas.RelayConfig) (string, error) {
+	hash := sha256.New()
+
+	// Hash Name, BaseURL and Description
+	hash.Write([]byte(cfg.Name))
+	hash.Write([]byte("baseURL:" + cfg.BaseURL))
+	if cfg.Description != "" {
+		hash.Write([]byte("description:" + cfg.Description))
+	}
+
+	// Hash Auth
+	data, err := sonic.Marshal(cfg.Auth)
+	if err != nil {
+		return "", err
+	}
+	hash.Write([]byte("auth:"))
+	hash.Write(data)
+
+	// Hash Credential: the value like a provider key's, the AWS block like a Bedrock key config
+	if cfg.Credential != nil {
+		if v := cfg.Credential.Value; v != nil {
+			if v.IsFromSecret() {
+				hash.Write([]byte("credential:ref:" + v.GetRawRef()))
+			} else {
+				hash.Write([]byte("credential:val:" + v.Val))
+			}
+		}
+		if cfg.Credential.AWS != nil {
+			data, err := sonic.Marshal(cfg.Credential.AWS)
+			if err != nil {
+				return "", err
+			}
+			hash.Write([]byte("credentialAWS:"))
+			hash.Write(data)
+		}
+	}
+
+	// Hash ExtraHeaders (a map, so the encoding must sort keys)
+	if len(cfg.ExtraHeaders) > 0 {
+		data, err := providerUtils.MarshalSorted(cfg.ExtraHeaders)
+		if err != nil {
+			return "", err
+		}
+		hash.Write([]byte("extraHeaders:"))
+		hash.Write(data)
+	}
+
+	// Hash Network
+	if cfg.Network != nil {
+		data, err := sonic.Marshal(cfg.Network)
+		if err != nil {
+			return "", err
+		}
+		hash.Write([]byte("network:"))
+		hash.Write(data)
+	}
+
+	// Hash ProxyConfig
+	if cfg.ProxyConfig != nil {
+		data, err := sonic.Marshal(cfg.ProxyConfig)
+		if err != nil {
+			return "", err
+		}
+		hash.Write([]byte("proxyConfig:"))
+		hash.Write(data)
+	}
+
+	// Hash Usage
+	if cfg.Usage != nil {
+		data, err := sonic.Marshal(cfg.Usage)
+		if err != nil {
+			return "", err
+		}
+		hash.Write([]byte("usage:"))
+		hash.Write(data)
+	}
+
+	// Hash Streaming
+	if cfg.Streaming != nil {
+		data, err := sonic.Marshal(cfg.Streaming)
+		if err != nil {
+			return "", err
+		}
+		hash.Write([]byte("streaming:"))
+		hash.Write(data)
+	}
+
+	// Hash Routes in file order (the first match wins); route headers are a map, so sort keys
+	if len(cfg.Routes) > 0 {
+		data, err := providerUtils.MarshalSorted(cfg.Routes)
+		if err != nil {
+			return "", err
+		}
+		hash.Write([]byte("routes:"))
+		hash.Write(data)
+	}
+
+	// Hash SkipRouteCheck
+	if cfg.SkipRouteCheck {
+		hash.Write([]byte("skipRouteCheck"))
+	}
+
+	// Hash IgnoreUpstreamCost
+	if cfg.IgnoreUpstreamCost {
+		hash.Write([]byte("ignoreUpstreamCost"))
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 // GeneratePluginHash generates a SHA256 hash for a plugin.
 // This is used to detect changes to plugins between config.json and database.
 // Skips: ID (autoIncrement), CreatedAt, UpdatedAt, IsCustom (dynamic fields)
